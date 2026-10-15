@@ -13,30 +13,31 @@ import {
 } from './mockData';
 
 // ─── Mode Detection ────────────────────────────────────────────────────────
-// Automatically detect if backends are available; fallback to demo mode otherwise
-let _backendAvailable: boolean | null = null;
-let _backendCheckPromise: Promise<boolean> | null = null;
+// If running on localhost (dev), try real backends; otherwise always use mock data
+const isLocalhost = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+let _backendAvailable: boolean | null = isLocalhost ? null : false;
 
 const isBackendAvailable = async (): Promise<boolean> => {
+  // On deployed environments (Vercel, etc.) — always use mock data
+  if (!isLocalhost) return false;
+
   if (_backendAvailable !== null) return _backendAvailable;
-  if (_backendCheckPromise) return _backendCheckPromise;
 
-  _backendCheckPromise = (async () => {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch('/api/catalog/health', { signal: controller.signal });
-      clearTimeout(timeout);
-      _backendAvailable = res.ok;
-    } catch {
-      _backendAvailable = false;
-    }
-    // Re-check every 30s in case backends come online
-    setTimeout(() => { _backendAvailable = null; _backendCheckPromise = null; }, 30000);
-    return _backendAvailable!;
-  })();
-
-  return _backendCheckPromise;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    const res = await fetch('/api/catalog/health', { signal: controller.signal });
+    clearTimeout(timeout);
+    const contentType = res.headers.get('content-type') || '';
+    // Make sure we got JSON back, not an HTML SPA page
+    _backendAvailable = res.ok && contentType.includes('application/json');
+  } catch {
+    _backendAvailable = false;
+  }
+  setTimeout(() => { _backendAvailable = null; }, 30000);
+  return _backendAvailable!;
 };
 
 // ─── Event Log System ──────────────────────────────────────────────────────
