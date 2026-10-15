@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -55,7 +55,7 @@ app.add_middleware(
 )
 
 START_TIME = time.time()
-CATALOG_SERVICE_URL = os.environ.get("CATALOG_SERVICE_URL", "http://localhost:8001")
+CATALOG_SERVICE_URL = os.environ.get("CATALOG_SERVICE_URL", "http://localhost:8001").rstrip('/')
 
 @app.middleware("http")
 async def structured_logging_middleware(request: Request, call_next):
@@ -149,7 +149,9 @@ def seed_sample_orders():
     finally:
         db.close()
 
-@app.get("/health")
+router = APIRouter()
+
+@router.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     db_status = "connected"
     try:
@@ -183,7 +185,7 @@ async def health_check(db: Session = Depends(get_db)):
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.post("/orders", response_model=OrderResponse, status_code=201)
+@router.post("/orders", response_model=OrderResponse, status_code=201)
 async def create_order(payload: CreateOrderRequest, db: Session = Depends(get_db)):
     if not payload.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
@@ -239,19 +241,19 @@ async def create_order(payload: CreateOrderRequest, db: Session = Depends(get_db
     logger.info(f"Order created successfully: {order.id} with total ${order.total_amount}")
     return order
 
-@app.get("/orders", response_model=List[OrderResponse])
+@router.get("/orders", response_model=List[OrderResponse])
 def list_orders(db: Session = Depends(get_db)):
     orders = db.query(OrderModel).order_by(OrderModel.created_at.desc()).limit(50).all()
     return orders
 
-@app.get("/orders/{order_id}", response_model=OrderResponse)
+@router.get("/orders/{order_id}", response_model=OrderResponse)
 def get_order(order_id: str, db: Session = Depends(get_db)):
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
     return order
 
-@app.patch("/orders/{order_id}/status", response_model=OrderResponse)
+@router.patch("/orders/{order_id}/status", response_model=OrderResponse)
 def update_order_status(order_id: str, payload: UpdateOrderStatusRequest, db: Session = Depends(get_db)):
     order = db.query(OrderModel).filter(OrderModel.id == order_id).first()
     if not order:
@@ -266,3 +268,7 @@ def update_order_status(order_id: str, payload: UpdateOrderStatusRequest, db: Se
     db.refresh(order)
     logger.info(f"Order {order_id} status updated to {payload.status}")
     return order
+
+# Mount both without prefix (for internal calls / Nginx) and with /api/orders (for Vercel rewrites)
+app.include_router(router)
+app.include_router(router, prefix="/api/orders")

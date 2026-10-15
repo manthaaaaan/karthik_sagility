@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, text
@@ -206,7 +206,9 @@ def seed_catalog():
     finally:
         db.close()
 
-@app.get("/health")
+router = APIRouter()
+
+@router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     db_status = "connected"
     try:
@@ -225,7 +227,7 @@ def health_check(db: Session = Depends(get_db)):
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/products", response_model=ProductListResponse)
+@router.get("/products", response_model=ProductListResponse)
 def get_products(
     search: Optional[str] = Query(None, description="Search by name, description, or sku"),
     category: Optional[str] = Query(None, description="Filter by category"),
@@ -265,20 +267,20 @@ def get_products(
         "page_size": page_size
     }
 
-@app.get("/products/{product_id}", response_model=ProductResponse)
+@router.get("/products/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, db: Session = Depends(get_db)):
     product = db.query(ProductModel).filter(ProductModel.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail=f"Product with id {product_id} not found")
     return product
 
-@app.get("/categories", response_model=List[str])
+@router.get("/categories", response_model=List[str])
 def get_categories(db: Session = Depends(get_db)):
     categories = db.query(ProductModel.category).distinct().all()
     return [c[0] for c in categories]
 
 # Architecture Safe Fault Demonstration Endpoints
-@app.post("/fault/inject")
+@router.post("/fault/inject")
 def inject_fault(mode: str = Query("500_error", enum=["500_error", "latency"]), latency_sec: float = 3.0):
     FAULT_STATE["active"] = True
     FAULT_STATE["mode"] = mode
@@ -286,10 +288,14 @@ def inject_fault(mode: str = Query("500_error", enum=["500_error", "latency"]), 
     logger.warning(f"Simulated fault injected: {mode} (latency: {latency_sec}s)")
     return {"message": "Simulated fault injected into Catalog Service", "fault": FAULT_STATE}
 
-@app.post("/fault/restore")
+@router.post("/fault/restore")
 def restore_fault():
     FAULT_STATE["active"] = False
     FAULT_STATE["mode"] = None
     FAULT_STATE["latency_seconds"] = 0.0
     logger.info("Simulated fault restored. Catalog Service operational.")
     return {"message": "Catalog Service restored to normal operation", "fault": FAULT_STATE}
+
+# Mount both without prefix (for internal calls / Nginx) and with /api/catalog (for Vercel rewrites)
+app.include_router(router)
+app.include_router(router, prefix="/api/catalog")

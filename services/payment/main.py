@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, Request, Response, Header
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -50,7 +50,7 @@ app.add_middleware(
 )
 
 START_TIME = time.time()
-ORDER_SERVICE_URL = os.environ.get("ORDER_SERVICE_URL", "http://localhost:8002")
+ORDER_SERVICE_URL = os.environ.get("ORDER_SERVICE_URL", "http://localhost:8002").rstrip('/')
 
 @app.middleware("http")
 async def structured_logging_middleware(request: Request, call_next):
@@ -113,7 +113,9 @@ def seed_sample_payment():
     finally:
         db.close()
 
-@app.get("/health")
+router = APIRouter()
+
+@router.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     db_status = "connected"
     try:
@@ -146,7 +148,7 @@ async def health_check(db: Session = Depends(get_db)):
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.post("/payments", response_model=PaymentResponse, status_code=201)
+@router.post("/payments", response_model=PaymentResponse, status_code=201)
 async def process_payment(
     payload: ProcessPaymentRequest,
     response: Response,
@@ -219,16 +221,20 @@ async def process_payment(
         is_idempotent_replay=False
     )
 
-@app.get("/payments/{payment_id}", response_model=PaymentResponse)
+@router.get("/payments/{payment_id}", response_model=PaymentResponse)
 def get_payment(payment_id: str, db: Session = Depends(get_db)):
     payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
     if not payment:
         raise HTTPException(status_code=404, detail=f"Payment {payment_id} not found")
     return payment
 
-@app.get("/payments/by-order/{order_id}", response_model=PaymentResponse)
+@router.get("/payments/by-order/{order_id}", response_model=PaymentResponse)
 def get_payment_by_order(order_id: str, db: Session = Depends(get_db)):
     payment = db.query(PaymentModel).filter(PaymentModel.order_id == order_id).order_by(PaymentModel.created_at.desc()).first()
     if not payment:
         raise HTTPException(status_code=404, detail=f"No payment recorded for order {order_id}")
     return payment
+
+# Mount both without prefix (for internal calls / Nginx) and with /api/payments (for Vercel rewrites)
+app.include_router(router)
+app.include_router(router, prefix="/api/payments")

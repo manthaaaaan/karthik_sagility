@@ -3,7 +3,8 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent / "data"))
+default_data_dir = Path("/tmp/sagility_data") if os.environ.get("VERCEL") else Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(os.environ.get("DATA_DIR", default_data_dir))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "payments.db"
 
